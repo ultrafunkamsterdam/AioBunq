@@ -307,7 +307,7 @@ class Bunq(object):
         {
             'uuid': 'SOME-UUID-STRING',
             'status': 'PAYMENT_CREATED',
-            'issuer_authentication_url': 'https://r.girogate.de/pi/bunqideal?tx=630520405&rs=S6jogC6POZYutOsn8wQ15Knh59FAbUVW&cs=5b2f7cab59fbad29b32f0b2c3dc51630290c871d71cd9657590fdabc4e6b41b3',
+            'issuer_authentication_url': 'https://r.girogate.de/pi/bunqideal?tx=630520405&rs=S6j435andmanymore',
             'bunqme_type': 'TAB',
             'bunqme_uuid': 'SOME-OTHER-UUID-STRING'
         }
