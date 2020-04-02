@@ -17,11 +17,11 @@
 
 
 ```
+## ASYNC BUNQ API CLIENT FOR PYTHON 3+
 
-###THIS IS A WORK IN PROGRESS SO NO REAL DOCS OR SETUP AVAILABLE. 
+#### THIS IS A WORK IN PROGRESS SO NO REAL DOCS OR SETUP AVAILABLE AND NO SUPPORT! 
 
-
-####features:
+### features:
 
 **To start**
 ```python
@@ -36,6 +36,8 @@ bunq = Bunq(debug=True) # sandbox with debug logging
 # should always be made first, before using any other methods
 await bunq.install()
 
+# note : you can copy-paste endpoints from the docs and call them, the package is tacking care of replacing the correct values
+# for userID and moneytary-accountID
 response = await bunq.post("/user/{userID}/monetary-account/{monetary-accountID}/notification-filter-url", {"some": "data"})
 ```   
     
@@ -62,14 +64,13 @@ await bunq.createBunqMeIdealRequest(
 ```
 example response:
 ```json
-    {
-        'uuid': 'SOME-UUID-STRING',
-        'status': 'PAYMENT_CREATED',
-        'issuer_authentication_url': 'https://r.girogate.de/pi/bunqideal?tx=loooooongstring-and-random-numbers',
-        'bunqme_type': 'TAB',
-        'bunqme_uuid': 'SOME-OTHER-UUID-STRING'
+     {
+        "uuid": "SOME-UUID-STRING",
+        "status": "PAYMENT_CREATED",
+        "issuer_authentication_url": "https://r.girogate.de/pi/bunqideal?tx=loooooongstring-and-random-numbers",
+        "bunqme_type": "TAB",
+        "bunqme_uuid": "SOME-OTHER-UUID-STRING"
     }
-
 
 ```
 
@@ -82,21 +83,20 @@ example response:
 ```json
 [
       { 
-        'currency': 'EUR',
-        'description': 'Mydescription',
-        'amount_paid': 3.0,
-        'amount_inquired': 3.0,
-        'bunqme_tab_id': 1445}
+        "currency": "EUR",
+        "description": "Mydescription",
+        "amount_paid": 3.0,
+        "amount_inquired": 3.0,
+        "bunqme_tab_id": 1445}
       ,
       {
-        'currency': 'EUR',
-        'description': '1234',
-        'amount_paid': 0.0,
-        'amount_inquired': 10.0,
-        'bunqme_tab_id': 1433
+        "currency": "EUR",
+        "description": "1234",
+        "amount_paid": 0.0,
+        "amount_inquired": 10.0,
+        "bunqme_tab_id": 1433
       }
 ]
 ```
 
 
-```
