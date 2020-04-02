@@ -29,12 +29,11 @@ class Bunq(object):
 
     def __init__(self, api_key=False, rsa_bits=2048, debug=False):
         """
-
+        todo: docu
         :param api_key:
         :param rsa_bits:
         :param debug:
         """
-
         self.sandbox = not api_key
         self.private_key = None
         self.public_key = None
@@ -63,6 +62,7 @@ class Bunq(object):
         self._strfmt = FormatterSkipKeywordNotFound()
         self.active_monetary_account_id = "not_authenticated"
 
+        
     @property
     def base_url(self):
         """
@@ -78,6 +78,8 @@ class Bunq(object):
             )
         return self._base
 
+    
+    
     def _create_headers(self, **headers):
         """
         Creates bunq request headers from a supplied (or not) headers mapping
@@ -97,6 +99,8 @@ class Bunq(object):
         headers.update(_hdrs)
         return headers
 
+    
+    
     async def install(self):
         """
         Creates a session context
@@ -165,6 +169,8 @@ class Bunq(object):
 
         await self.refreshIdealIssuers()
 
+        
+        
     async def refreshIdealIssuers(self):
         """
 
@@ -179,6 +185,8 @@ class Bunq(object):
             "issuer"
         ]
 
+        
+        
     async def refreshMonetaryAccounts(self):
         response = await self.call("GET", f"user/{self.user_id}/monetary-account")
         self.monetary_accounts = [r["MonetaryAccountBank"] for r in response]
@@ -193,6 +201,8 @@ class Bunq(object):
             if ma["id"] == self.active_monetary_account_id:
                 return ma
 
+            
+            
     def setActiveMonetaryAccount(self, id):
         """
         Sets the active monetary account id used in calls
@@ -207,6 +217,8 @@ class Bunq(object):
         else:
             self.active_monetary_account_id = self.monetary_accounts[id]["id"]
 
+            
+            
     async def call(self, method, endpoint, data=None, **params):
         """
 
@@ -256,6 +268,8 @@ class Bunq(object):
             return await self._check_response(response)
             # return await response.json()
 
+            
+            
     async def _check_response(self, response: ClientResponse):
         """
 
@@ -279,9 +293,13 @@ class Bunq(object):
         except:
             raise
 
+            
+            
     async def getBunqMeTabs(self):
         pass
 
+    
+    
     async def createBunqMeIdealRequest(
         self,
         value,
@@ -361,6 +379,8 @@ class Bunq(object):
             self._base = None
             return response[0]["BunqMeMerchantRequest"]
 
+        
+        
     async def checkOpenBunqMeIdealRequests(self):
         """
 
@@ -401,6 +421,8 @@ class Bunq(object):
 
         return answer
 
+    
+    
     def __repr__(self):
         r = "<Bunq Api (installed: {}, session: {}, active_monetary_account: {})>"
         return r.format(
@@ -409,6 +431,8 @@ class Bunq(object):
             self.active_monetary_account_id,
         )
 
+    
+    
     def __getattribute__(self, attr):
         try:
             return object.__getattribute__(self, attr)
