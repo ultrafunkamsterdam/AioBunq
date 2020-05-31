@@ -1,5 +1,6 @@
 import string
 
+
 class FormatterSkipKeywordNotFound(string.Formatter):
     def __init__(self, default="{{{0}}}"):
         self.default = default

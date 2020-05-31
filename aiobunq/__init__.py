@@ -16,3 +16,14 @@
 
 WIP
 """
+
+import os
+
+from .bunq import Bunq, BunqApiResponseError
+
+
+CONFIG_PATH = os.path.join(
+    os.path.abspath(os.path.dirname(__file__)), "..", "config.py"
+)
+if os.path.exists(CONFIG_PATH):
+    exec(open(CONFIG_PATH).read())

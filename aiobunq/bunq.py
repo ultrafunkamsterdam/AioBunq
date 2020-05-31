@@ -1,24 +1,32 @@
+from __future__ import annotations
+
 import asyncio
+import datetime
+import json
 import logging
-import string
-from base64 import b64encode
+import sys
+from base64 import b64decode, b64encode
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-from json import JSONEncoder, JSONDecoder
+from json import JSONDecoder, JSONEncoder
 from uuid import uuid4
 
 from Crypto import Random
 from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
 from Crypto.Signature import PKCS1_v1_5
-from aiohttp import ClientSession, TCPConnector, ClientTimeout, ClientResponse
+from aiohttp import ClientResponse, ClientSession, ClientTimeout, TCPConnector
 
 from .util import FormatterSkipKeywordNotFound
 
-__ALL__ = ["Bunq"]
+
+__all__ = ["Bunq"]
 
 
 class BunqApiResponseError(BaseException):
+    pass
+
+
+class NotInstalledError(BaseException):
     pass
 
 
@@ -27,13 +35,15 @@ class Bunq(object):
     Async Bunq Api
     """
 
-    def __init__(self, api_key=False, rsa_bits=2048, debug=False):
+
+    def __init__(self, api_key=False, rsa_bits=2048, use_flexdict=True, debug=False):
         """
-        todo: docu
+
         :param api_key:
         :param rsa_bits:
         :param debug:
         """
+
         self.sandbox = not api_key
         self.private_key = None
         self.public_key = None
@@ -47,7 +57,8 @@ class Bunq(object):
         self.api_key = api_key
         self.last_request = None
         self.last_response = None
-
+        self.last_response_data = None
+        self.use_flexdict = use_flexdict
         self._base = None
         self._rng = None
         self.rsa_bits = rsa_bits
@@ -62,7 +73,7 @@ class Bunq(object):
         self._strfmt = FormatterSkipKeywordNotFound()
         self.active_monetary_account_id = "not_authenticated"
 
-        
+
     @property
     def base_url(self):
         """
@@ -78,8 +89,7 @@ class Bunq(object):
             )
         return self._base
 
-    
-    
+
     def _create_headers(self, **headers):
         """
         Creates bunq request headers from a supplied (or not) headers mapping
@@ -99,8 +109,7 @@ class Bunq(object):
         headers.update(_hdrs)
         return headers
 
-    
-    
+
     async def install(self):
         """
         Creates a session context
@@ -127,50 +136,60 @@ class Bunq(object):
             )
 
         if self.sandbox:
-            response = await self.call("POST", "sandbox-user")
+            response = await self._call("POST", "sandbox-user")
             self.api_key = response[0]["ApiKey"]["api_key"]
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # step 1 - installation
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        req_data = {"client_public_key": self.public_key.export_key("PEM").decode()}
-        response = await self.call("POST", "installation", req_data)
-        self.token = response[1]["Token"]["token"]
-        self.public_key_remote = response[2]["ServerPublicKey"]["server_public_key"]
-        self.is_installed = True
+        try:
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            # step 1 - installation
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            req_data = {"client_public_key": self.public_key.export_key("PEM").decode()}
+            response = await self._call("POST", "installation", req_data)
+            self.token = response[1]["Token"]["token"]
+            self.public_key_remote = response[2]["ServerPublicKey"]["server_public_key"]
+            self.is_installed = True
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # step 2 - Device-Server
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        req_data = {
-            "description": "hiii",
-            "secret": self.api_key,
-            "permitted_ips": ["*"],
-        }
-        await self.call("POST", "device-server", req_data)
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            # step 2 - Device-Server
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            req_data = {
+                "description": "hiii",
+                "secret": self.api_key,
+                "permitted_ips": ["*"],
+            }
+            await self._call("POST", "device-server", req_data)
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # step 3 - Session-Server
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        req_data = {"secret": self.api_key}
-        response = await self.call("POST", "session-server", req_data)
-        self.token = response[1]["Token"]["token"]
-        self.user_person = response[2]["UserPerson"]
-        self.user_id = self.user_person["id"]
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            # step 3 - Session-Server
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            req_data = {"secret": self.api_key}
+            response = await self._call("POST", "session-server", req_data)
+            self.token = response[1]["Token"]["token"]
+            self.user_person = response[2]["UserPerson"]
+            self.user_id = self.user_person["id"]
 
-        self.is_session_established = True
+            self.is_session_established = True
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # step 4 - Extra initialization
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        await self.refreshMonetaryAccounts()
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            # step 4 - Extra initialization
+            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            await self.refreshMonetaryAccounts()
+            try:
+                self.active_monetary_account_id = self.monetary_accounts[0][
+                    "MonetaryAccountBank"
+                ]["id"]
+            except:
+                try:
+                    self.active_monetary_account_id = self.monetary_accounts[0].id
+                except (KeyError, AttributeError):
+                    self.active_monetary_account_id = self.monetary_accounts[0]
 
-        self.active_monetary_account_id = self.monetary_accounts[0]["id"]
+            await self.refreshIdealIssuers()
+        except Exception as e:
+            tb = sys.exc_info()
+            raise e.with_traceback(tb[2])
 
-        await self.refreshIdealIssuers()
 
-        
-        
     async def refreshIdealIssuers(self):
         """
 
@@ -185,11 +204,12 @@ class Bunq(object):
             "issuer"
         ]
 
-        
-        
+
     async def refreshMonetaryAccounts(self):
-        response = await self.call("GET", f"user/{self.user_id}/monetary-account")
-        self.monetary_accounts = [r["MonetaryAccountBank"] for r in response]
+        response = await self._call("GET", f"user/{self.user_id}/monetary-account")
+        # self.monetary_accounts = [fdict(r["MonetaryAccountBank"], 'MonetaryAccountBank') for r in response]
+        self.monetary_accounts = response
+
 
     @property
     def active_monetary_account(self):
@@ -198,11 +218,14 @@ class Bunq(object):
         :return:
         """
         for ma in self.monetary_accounts:
-            if ma["id"] == self.active_monetary_account_id:
-                return ma
+            if not self.use_flexdict:
+                if ma["id"] == self.active_monetary_account_id:
+                    return ma
+            else:
+                if ma.id == self.active_monetary_account_id:
+                    return ma
 
-            
-            
+
     def setActiveMonetaryAccount(self, id):
         """
         Sets the active monetary account id used in calls
@@ -211,15 +234,49 @@ class Bunq(object):
 
         """
         for ma in self.monetary_accounts:
-            if ma["id"] == id:
-                self.active_monetary_account_id = ma["id"]
-                break
-        else:
-            self.active_monetary_account_id = self.monetary_accounts[id]["id"]
 
-            
-            
-    async def call(self, method, endpoint, data=None, **params):
+            if not self.use_flexdict:
+                if ma["id"] == id:
+                    self.active_monetary_account_id = ma["id"]
+            else:
+                if ma.id == id:
+                    self.active_monetary_account_id = ma.id
+
+        #     self.active_monetary_account_id = self.monetary_accounts[id]["id"]
+
+
+    async def _prepare_request(self, endpoint, data=None):
+
+        if not self.is_installed and not any(
+                map(lambda word: word in endpoint, ("installation", "sandbox-user"))
+        ):
+            raise Exception(
+                "a call to install() should be made first to setup the api context"
+            )
+        if endpoint[0] == "/":
+            endpoint = endpoint[1:]
+        if "{userID}" in endpoint:
+            endpoint = self._strfmt.format(endpoint, **{"userID": self.user_id})
+        if "{monetary-accountID}" in endpoint:
+            endpoint = self._strfmt.format(
+                endpoint, **{"monetary-accountID": self.active_monetary_account_id}
+            )
+        url = self.base_url + endpoint
+        headers = self._create_headers()
+        body = self._jsonencoder.encode(data or {})
+        if self.is_installed:
+            digest = SHA256.new(body.encode())
+            sig = PKCS1_v1_5.new(self.private_key).sign(digest)
+            headers.update(
+                {
+                    "X-Bunq-Client-Authentication": self.token,
+                    "X-Bunq-Client-Signature": b64encode(sig).decode(),
+                }
+            )
+        return url, body, headers
+
+
+    async def _call(self, method, endpoint, data=None, flexdict=False, **params):
         """
 
         :param method:
@@ -228,85 +285,156 @@ class Bunq(object):
         :param params:
         :return:
         """
+        if not flexdict:
+            if self.use_flexdict:
+                if self.is_session_established:
+                    flexdict = True
 
-        if not self.is_installed and not any(
-            map(lambda word: word in endpoint, ("installation", "sandbox-user"))
-        ):
-
-            raise Exception(
-                "a call to install() should be made first to setup the api context"
-            )
-
-        if endpoint[0] == "/":
-            endpoint = endpoint[1:]
-
-        if "{userID}" in endpoint:
-            endpoint = self._strfmt.format(endpoint, **{"userID": self.user_id})
-        if "{monetary-accountID}" in endpoint:
-            endpoint = self._strfmt.format(
-                endpoint, **{"monetary-accountID": self.active_monetary_account_id}
-            )
-
-        url = self.base_url + endpoint
-        headers = self._create_headers()
-        body = self._jsonencoder.encode(data or {})
-        if self.is_installed:
-            signer = PKCS1_v1_5.new(self.private_key)
-            digest = SHA256.new()
-            digest.update(body.encode())
-            sig = signer.sign(digest)
-            headers.update(
-                {
-                    "X-Bunq-Client-Authentication": self.token,
-                    "X-Bunq-Client-Signature": b64encode(sig).decode(),
-                }
-            )
-
+        url, body, headers = await self._prepare_request(endpoint, data)
         async with self._connection.request(
-            method, url, data=body, params=params, headers=headers
+                method, url, data=body, params=params, headers=headers
         ) as response:
-            return await self._check_response(response)
-            # return await response.json()
+            return await self._check_response(response, flexdict)
 
-            
-            
-    async def _check_response(self, response: ClientResponse):
+
+    async def _check_response(self, response: ClientResponse, flexdict=False):
         """
-
         :param response:
         :return:
         """
         self.logger.debug("REQUEST: {0.status} {0.method} {0.url}".format(response))
         self.last_response = response
         self.last_request = response.request_info
+
+        if self.is_installed:
+            if signature := response.headers.get("X-Bunq-Server-Signature"):
+                digest = SHA256.new(await response.read())
+                try:
+                    PKCS1_v1_5.new(RSA.import_key(self.public_key_remote)).verify(
+                        digest, b64decode(signature)
+                    )
+                except Exception as e:
+                    raise BunqApiResponseError(
+                        f"Server response signature invalid: {signature}"
+                    ) from e
+
         if response.method not in ("GET", "POST", "PUT", "DELETE"):
             return await response.text()
         try:
             data = await response.json()
         except Exception as e:
             raise BunqApiResponseError(f"{e} {await response.read()}")
+        self.last_response_data = data
         self.logger.debug(f"RESPONSE: {data}\n\n")
         try:
+            if flexdict:
+                return _response_to_fdict(data["Response"])
+                # first_object_name = list(data['Response'][0].keys())[0]
+            #    return [fdict(r[first_object_name], first_object_name) for r in data["Response"]]
+
             return data["Response"]
         except KeyError as e:
-            raise BunqApiResponseError(data["Error"])
-        except:
-            raise
+            raise BunqApiResponseError(str(data))
 
-            
-            
+
     async def getBunqMeTabs(self):
-        pass
+        raise NotInstalledError
 
-    
-    
-    async def createBunqMeIdealRequest(
-        self,
-        value,
-        currency="EUR",
-        description="",
-        redirect_url="",
-        ideal_issuer_bic="",
+
+    async def createBunqMeTab(
+            self, value, currency="EUR", description="", redirect_url=""
+    ):
+
+        reqdata = {
+            "bunqme_tab_entry": {
+                "amount_inquired": {"value": value, "currency": currency},
+                "description": description,
+                "redirect_url": redirect_url,
+            }
+        }
+        response = await self._call(
+            "POST",
+            "user/{userID}/monetary-account/{monetary-accountID}/bunqme-tab",
+            reqdata,
+        )
+
+        tab_id = response["id"]
+
+        return await self.get(
+            "user/{userID}/monetary-account/{monetary-accountID}/bunqme-tab/"
+            + str(tab_id)
+        )
+
+
+    async def _call_web_api_endpoint(self, endpoint, data=None, retries=10):
+
+        try:
+            # temp change of api to communicate with another bunq api
+            self._base = "https://api.bunq.me/v1/"
+            response = await self._call("POST", endpoint, data)
+            bunqme_merchant_request_uuid = response["uuid"]
+            for _ in range(10):
+                await asyncio.sleep(1)
+                response = await self._call(
+                    "GET", endpoint + "/" + bunqme_merchant_request_uuid
+                )
+                if response["status"] != "PAYMENT_CREATED":
+                    continue
+                return response
+        finally:
+            # switch back to original endpoint in any case
+            self._base = None
+
+
+    async def createSofortPaymentRequest(
+            self, value, currency="EUR", description="", redirect_url="", **kw
+    ):
+        """
+        Create a payment request with value, currency, description, redirect_url, and issuer_bic and
+        returns a dict containing the the Bunqme-Tab and direct iDeal payment link.
+        This also triggers notifications for category BUNQME_TAB so you can receive webhook/ipn
+        responses from Bunq when subscribed.
+
+        :param value:
+        :param currency:
+        :param description:
+        :param redirect_url:
+
+        :return: dict
+
+        EXAMPLE RESPONSE
+        {
+           'uuid': 'SOME-UUID-STRING',
+           'status': 'PAYMENT_CREATED',
+           'issuer_authentication_url': 'https://r.girogate.de/pi/bunqideal?tx=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+           'bunqme_type': 'TAB',
+           'bunqme_uuid': 'SOME-OTHER-UUID-STRING'
+        }
+
+        """
+        bunq_me_tab = await self.createBunqMeTab(
+            value, currency, description, redirect_url
+        )
+        bunq_me_tab_uuid = bunq_me_tab["bunqme_tab_entry"]["uuid"]
+        reqdata = {
+            "amount_requested": {"currency": currency, "value": value, },
+            "bunqme_type": "TAB",
+            "merchant_type": "SOFORT",
+            "bunqme_uuid": bunq_me_tab_uuid,
+        }
+        return await self._call_web_api_endpoint(
+            "bunqme-merchant-request", data=reqdata
+        )
+
+
+    async def createIdealPaymentRequest(
+            self,
+            value,
+            currency="EUR",
+            description="",
+            redirect_url="",
+            ideal_issuer_bic="",
+            **kw,
     ):
         """
         Create a payment request with value, currency, description, redirect_url, and issuer_bic and
@@ -325,119 +453,199 @@ class Bunq(object):
         {
             'uuid': 'SOME-UUID-STRING',
             'status': 'PAYMENT_CREATED',
-            'issuer_authentication_url': 'https://r.girogate.de/pi/bunqideal?tx=630520405&rs=S6j435andmanymore',
+            'issuer_authentication_url': 'https://r.girogate.de/pi/bunqideal?tx=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
             'bunqme_type': 'TAB',
             'bunqme_uuid': 'SOME-OTHER-UUID-STRING'
         }
 
         """
-        reqdata = {
-            "bunqme_tab_entry": {
-                "amount_inquired": {"value": value, "currency": currency},
-                "description": description,
-                "redirect_url": redirect_url,
-            }
-        }
-        response = await self.call(
-            "POST",
-            "user/{userID}/monetary-account/{monetary-accountID}/bunqme-tab",
-            reqdata,
-        )
-        tab_id = response[0]["Id"]["id"]
 
-        response = await self.get(
-            "user/{userID}/monetary-account/{monetary-accountID}/bunqme-tab/"
-            + str(tab_id)
+        bunq_me_tab = await self.createBunqMeTab(
+            value, currency, description, redirect_url
         )
-        bunqme_tab_uuid = response[0]["BunqMeTab"]["bunqme_tab_entry"]["uuid"]
-
+        bunq_me_tab_uuid = bunq_me_tab["bunqme_tab_entry"]["uuid"]
         reqdata = {
-            "amount_requested": {"currency": currency, "value": value,},
+            "amount_requested": {"currency": currency, "value": value, },
             "bunqme_type": "TAB",
-            "issuer": ideal_issuer_bic,
             "merchant_type": "IDEAL",
-            "bunqme_uuid": bunqme_tab_uuid,
+            "issuer": ideal_issuer_bic,
+            "bunqme_uuid": bunq_me_tab_uuid,
         }
-
-        # change to bunq.me api base url
-        self._base = "https://api.bunq.me/v1/"
-
-        response = await self.call("POST", "bunqme-merchant-request", reqdata)
-        bunqme_merchant_request_uuid = response[0]["BunqMeMerchantRequest"]["uuid"]
-
-        while True:
-            await asyncio.sleep(0.5)
-            response = await self.call(
-                "GET", "bunqme-merchant-request/" + bunqme_merchant_request_uuid
-            )
-            if (
-                response[0]["BunqMeMerchantRequest"]["status"]
-                == "PAYMENT_WAITING_FOR_CREATION"
-            ):
-                continue
-            # reset api url to main bunq.com api instead of bunq.me api
-            self._base = None
-            return response[0]["BunqMeMerchantRequest"]
-
-        
-        
-    async def checkOpenBunqMeIdealRequests(self):
-        """
-
-        :return:
-        """
-        # idea: search by description
-
-        response = await self.call(
-            "GET", "/user/{userID}/monetary-account/{monetary-accountID}/bunqme-tab"
+        return await self._call_web_api_endpoint(
+            "bunqme-merchant-request", data=reqdata
         )
 
-        answer = []
-        for bunq_me_tab in response:
-            bunq_me_tab = bunq_me_tab["BunqMeTab"]
-            bunq_me_tab_entry = bunq_me_tab["bunqme_tab_entry"]
-            description = bunq_me_tab_entry["description"]
-            inquiries = bunq_me_tab["result_inquiries"]
-            amount_inquired = float(bunq_me_tab_entry["amount_inquired"]["value"])
-            currency = bunq_me_tab_entry["amount_inquired"]["currency"]
-            total_payment_value = 0.0
 
-            if inquiries and len(inquiries) > 0:
-                for inquiry in inquiries:
-                    payment = inquiry["payment"]["Payment"]
-                    payment_amount = payment["amount"]["value"]
-                    payment_amount = float(payment_amount)
-                    total_payment_value += payment_amount
+    async def createBancontactPaymentRequest(
+            self, value, currency, description, redirect_url, name="buyer", **kw
+    ):
+        """
+        Create a payment request with value, currency, description, redirect_url, and issuer_bic and
+        returns a dict containing the the Bunqme-Tab and direct iDeal payment link.
+        This also triggers notifications for category BUNQME_TAB so you can receive webhook/ipn
+        responses from Bunq when subscribed.
 
-            answer += [
-                {
-                    "currency": currency,
-                    "description": description,
-                    "amount_paid": total_payment_value,
-                    "amount_inquired": amount_inquired,
-                    "bunqme_tab_id": bunq_me_tab["id"],
-                }
-            ]
+        :param value:
+        :param currency:
+        :param description:
+        :param redirect_url:
+        :param name:
+        :return: dict
 
-        return answer
+        EXAMPLE RESPONSE
+        {
+           'uuid': 'SOME-UUID-STRING',
+           'status': 'PAYMENT_CREATED',
+           'issuer_authentication_url': 'https://r.girogate.de/pi/bunqideal?tx=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+           'bunqme_type': 'TAB',
+           'bunqme_uuid': 'SOME-OTHER-UUID-STRING'
+}
+        """
 
-    
-    
+        bunq_me_tab = await self.createBunqMeTab(
+            value, currency, description, redirect_url
+        )
+        bunq_me_tab_uuid = bunq_me_tab["bunqme_tab_entry"]["uuid"]
+
+        reqdata = {
+            "amount_requested": {"currency": currency, "value": value, },
+            "bunqme_type": "TAB",
+            "merchant_type": "BANCONTACT",
+            "bunqme_uuid": bunq_me_tab_uuid,
+            "name": name,
+        }
+        return await self._call_web_api_endpoint(
+            "bunqme-merchant-request", data=reqdata
+        )
+
+
+    #
+    # async def checkOpenBunqMeIdealRequests(self):
+    #     """
+    #
+    #     :return:
+    #     """
+    #     # idea: search by description
+    #
+    #     response = await self._call(
+    #         "GET", "/user/{userID}/monetary-account/{monetary-accountID}/bunqme-tab"
+    #     )
+    #
+    #     answer = []
+    #     for bunq_me_tab in response:
+    #         bunq_me_tab = bunq_me_tab["BunqMeTab"]
+    #         bunq_me_tab_entry = bunq_me_tab["bunqme_tab_entry"]
+    #         description = bunq_me_tab_entry["description"]
+    #         inquiries = bunq_me_tab["result_inquiries"]
+    #         amount_inquired = float(bunq_me_tab_entry["amount_inquired"]["value"])
+    #         currency = bunq_me_tab_entry["amount_inquired"]["currency"]
+    #         total_payment_value = 0.0
+    #
+    #         if inquiries and len(inquiries) > 0:
+    #             for inquiry in inquiries:
+    #                 payment = inquiry["payment"]["Payment"]
+    #                 payment_amount = payment["amount"]["value"]
+    #                 payment_amount = float(payment_amount)
+    #                 total_payment_value += payment_amount
+    #
+    #         answer += [
+    #             {
+    #                 "currency": currency,
+    #                 "description": description,
+    #                 "amount_paid": total_payment_value,
+    #                 "amount_inquired": amount_inquired,
+    #                 "bunqme_tab_id": bunq_me_tab["id"],
+    #             }
+    #         ]
+    #
+    #     return answer
+    #
+    #
+    # def __repr__(self):
+    #     r = "<Bunq Api (installed: {}, session: {}, active_monetary_account: {})>"
+    #     return r.format(
+    #         self.is_installed,
+    #         self.is_session_established,
+    #         self.active_monetary_account_id,
+    #     )
+    #
+    #
+    # def __getattribute__(self, attr):
+    #     try:
+    #         return object.__getattribute__(self, attr)
+    #     except AttributeError:
+    #         if attr.upper() in self._accepted_methods:
+    #             return partial(self._call, attr)
+    #         raise
+
+
+def _datetime_from_iso_string(s):
+    return datetime.datetime.fromisoformat(s)
+
+
+def _response_to_fdict(d):
+    if len(d) == 1:
+        return BunqObject(d[0])
+    return [BunqObject(x) for x in d]
+
+
+class BunqObject(object):
+    """
+    Class expects a dict consisting of a single key value pair
+    The key is the object name and value is data
+
+    example:
+    >> d = {'MonetaryAccountBank' : { "key": "val", "key1" : ["a","b","c","d"], "key2": "val2" }
+    >> BunqObject(d)
+
+    """
+
+    _datetime_keys = ["created", "updated", "modified", "expire"]
+
+
+    def __init__(self, d):
+        self._name, data = d.popitem()
+        if self._name:
+            self.__class__.__name__ = self._name
+        self.__dict__.update(
+            {
+                k: _datetime_from_iso_string(v) if k in self._datetime_keys else v
+                for k, v in data.items()
+            }
+        )
+
+
+    @property
+    def dict(self):
+        return {k: v for k, v in vars(self).items() if k[0] != "_"}
+
+
+    def print(self):
+        print(json.dumps(self.dict, indent=4))
+
+
+    __getitem__ = object.__getattribute__
+    __setitem__ = object.__setattr__
+
+
     def __repr__(self):
-        r = "<Bunq Api (installed: {}, session: {}, active_monetary_account: {})>"
-        return r.format(
-            self.is_installed,
-            self.is_session_established,
-            self.active_monetary_account_id,
+        def q_iterable(iterable):
+            if isinstance(iterable, (int, str)):
+                return iterable
+            return len(iterable)
+
+
+        items = []
+        for k, v in vars(self).items():
+            if k[0] == "_":
+                continue
+            # noinspection PyBroadException
+            try:
+                length = q_iterable(v)
+                item = "%s: [ %d subitems ]" % (k, length)
+            except Exception as e:
+                item = "%s: %s" % (k, v)
+            items.append(item)
+        return "<{0:<s} (\n\t{1:^s}\n)>".format(
+            self.__class__.__name__, "\n\t".join(items)
         )
-
-    
-    
-    def __getattribute__(self, attr):
-        try:
-            return object.__getattribute__(self, attr)
-        except AttributeError:
-            if attr.upper() in self._accepted_methods:
-                return partial(self.call, attr)
-            raise
-
