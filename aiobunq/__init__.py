@@ -20,12 +20,10 @@ ASYNC BUNQ API CLIENT FOR PYTHON 3+
 
 """
 
-
 from ._client import Client
 
 
 def createClient(api_key=None):
-
     """Creates a Client, nog logged in yet.
 
     Args:

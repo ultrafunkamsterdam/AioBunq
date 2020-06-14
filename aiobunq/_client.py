@@ -7,11 +7,10 @@ from contextlib import contextmanager
 from typing import Iterable
 from urllib.parse import urljoin
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, TCPConnector
 
 from . import _auth as auth
-from ._models import MonetaryAccount
-
+from ._models import MonetaryAccount, BunqTab
 
 __all__ = ["Client"]
 
@@ -51,6 +50,11 @@ HDR_KEY_CACHE_CONTROL = "Cache-Control"
 HDR_VAL_CACHE_CONTROL = "none"
 
 BUNQME_URL_NAME = "EX4"
+KEY_TAB_ENTRY = "bunqme_tab_entry"
+KEY_AMOUNT_INQUIRED = "amount_inquired"
+KEY_VALUE = "value"
+KEY_CURRENCY = "currency"
+
 POST = "POST"
 GET = "GET"
 PUT = "PUT"
@@ -65,7 +69,6 @@ class Client:
     SLASH = "/"
     DEFAULT_STORE_FP = os.path.join(os.path.expanduser("~"), "._~bunq.state")
     URI_MONETARY_ACCOUNT = "/".join(["user", "{}", "monetary-account", "{}"])
-
 
     @property
     def id(self):
@@ -115,7 +118,10 @@ class Client:
             self.sign_requests = True
 
     async def get_session(self):
-        self._session = ClientSession(connector_owner=False)
+        self._session = ClientSession()
+        # self._session = ClientSession(
+        #     connector_owner=False,
+        #     connector=TCPConnector(force_close=True))
         return self._session
 
     @property
@@ -126,7 +132,12 @@ class Client:
     def restore(cls, filepath=None):
         filepath = filepath or cls.DEFAULT_STORE_FP
         basic_auth = auth.BasicAuth.load_file(filepath)
-        return cls(basic_auth)
+        instance = cls(basic_auth)
+        if instance.basic_auth.monetary_accounts:
+            from ._bunqme import BunqMe
+
+            instance.bunq_me = BunqMe(instance)
+        return instance
 
     @property
     def sign_requests(self):
@@ -162,15 +173,14 @@ class Client:
             print("Using sandbox environment")
         self.auth: auth.Auth = auth.Auth(self.basic_auth)
 
-
     async def logon(self):
         await self._install()
         await self._device_server()
         await self._session_server()
-        await self.get_monetary_account()
+        await self.get_monetary_accounts()
         from ._bunqme import BunqMe
-        self.bunq_me = BunqMe(self)
 
+        self.bunq_me = BunqMe(self)
 
     async def _install(self):
         if self.basic_auth.sandbox:
@@ -205,20 +215,21 @@ class Client:
         self.basic_auth._last_auth_timestamp = response[1]["Token"]["updated"]
         self.basic_auth.user = response[2]["UserPerson"]
 
-
-    async def get_monetary_account(self):
+    async def get_monetary_accounts(self):
         response = await self.request(
             GET, self.URI_MONETARY_ACCOUNT.format(self.basic_auth.id, "")
         )
-        self.basic_auth.monetary_accounts = self.monetary_accounts = [
-            MonetaryAccount(i) for i in response
-        ]
+        self.basic_auth.monetary_accounts = [MonetaryAccount(i) for i in response]
+        if not self.basic_auth.current_monetary_account:
+            self.basic_auth.current_monetary_account = self.basic_auth.monetary_accounts[
+                0
+            ]
 
     def _sign(self, body):
         return base64.b64encode(self.auth.sign(body)).decode()
 
     async def request(self, method, endpoint, data=None, headers=None, **kwargs):
-        if not self._session:
+        if not self._session or self._session.closed:
             await self.get_session()
 
         endpoint = urljoin("/", endpoint)
@@ -230,24 +241,60 @@ class Client:
                 or self.basic_auth.token,
             }
 
-        async with self.session.request(
+        r = await self.session.request(
             method,
             self.base + endpoint,
             json=data,
             headers={**self.headers, **headers_},
-            **kwargs
-        ) as r:
-            self.last_raw_response = r
-            self.last_request_info = r.request_info
-            self.last_response = r = await r.json()
+            **kwargs)
+
+        self.last_raw_response = r
+        self.last_request_info = r.request_info
+        self.last_response = r = await r.json()
+        try:
+            return r["Response"]
+        except KeyError:
             try:
-                return r["Response"]
+                return r["Error"]
             except KeyError:
-                try:
-                    return r["Error"]
-                except KeyError:
-                    pass
-            return r
+                pass
+        return r
+
+    async def createTab(
+        self,
+        value: str = "",
+        currency: str = "EUR",
+        description: str = "",
+        redirect_url: str = "",
+    ):
+        """Creates a Tab. Needed as base for all other payment options
+
+        :param value:
+        :param currency:
+        :param description:
+        :param redirect_url:
+        :return:[...,BunqObject,...]
+        """
+        r = await self.request(
+            "POST",
+            f"/user/{self.id}/monetary-account/{self.basic_auth.current_monetary_account.id}/bunqme-tab",
+            data={
+                KEY_TAB_ENTRY: {
+                    KEY_AMOUNT_INQUIRED: {KEY_VALUE: value, KEY_CURRENCY: currency},
+                    "description": description,
+                    "redirect_url": redirect_url,
+                }
+            },
+        )
+        rid = r[0]["Id"]["id"]
+        r = await self.request(
+            "GET",
+            f"/user/{self.id}/monetary-account/{self.basic_auth.current_monetary_account.id}/bunqme-tab/{rid}",
+        )
+
+        return_value = BunqTab(r[0])
+        return_value.client = self
+        return return_value
 
     # def __getattribute__(self, item):
     #     exc = None
@@ -269,17 +316,19 @@ class Client:
     #         pass
     #     raise exc
     #
-    # async def __aenter__(self):
-    #     pass
-    #
-    # async def __aexit__(self, exc_type, exc_val, exc_tb):
-    #
-    #     pass
+
+    async def cleanup(self):
+        loop = asyncio.get_running_loop()
+        await self._session.close()
+        await asyncio.sleep(.5)
+        print('cleaned up')
+        loop.stop()
 
     def __del__(self):
-        if self._session:
-            try:
-                if asyncio.get_running_loop().is_running():
-                    asyncio.create_task(self._session.close())
-            except RuntimeError:
-                asyncio.get_event_loop().run_until_complete(self._session.close())
+        try:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(self.cleanup())
+            loop.close()
+        except RuntimeError as e:
+            raise
+

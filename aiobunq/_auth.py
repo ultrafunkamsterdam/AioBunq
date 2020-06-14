@@ -1,6 +1,5 @@
 import pickle
 
-
 __all__ = ["BasicAuth"]
 
 
@@ -25,6 +24,7 @@ class BasicAuth:
         self._last_auth_timestamp = None
         self._user = None
         self._monetary_accounts = None
+        self._current_monetary_account = None
 
     @property
     def id(self):
@@ -124,6 +124,14 @@ class BasicAuth:
     @monetary_accounts.setter
     def monetary_accounts(self, value):
         self._monetary_accounts = value
+
+    @property
+    def current_monetary_account(self):
+        return self._current_monetary_account
+
+    @current_monetary_account.setter
+    def current_monetary_account(self, value):
+        self._current_monetary_account = value
 
     @property
     def user(self):
