@@ -44,8 +44,7 @@ client = createClient('SOME_API_KEY') # production mode
 ```ipython
 In [1]: from aiobunq import createClient
 
-In [2]: client = createClient()
-Using sandbox environment
+In [2]: client = createClient()   # Using sandbox environment
 
 In [3]: await client.logon()
 
@@ -241,7 +240,7 @@ client = Client.restore()
 ```
 
 ## Currently supports createing payment requests for iDeal, Sofort, Bancontact & Creditcard
-
+### Section below needs updated doc, sorry
 ```python
 await bunq.createBunqMeIdealRequest(
         value, 
