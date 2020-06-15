@@ -1,3 +1,8 @@
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# part of aiobunq package
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
 import asyncio
 import base64
 import json
@@ -7,10 +12,11 @@ from contextlib import contextmanager
 from typing import Iterable
 from urllib.parse import urljoin
 
-from aiohttp import ClientSession, TCPConnector
+from aiohttp import ClientSession
 
 from . import _auth as auth
 from ._models import MonetaryAccount, BunqTab
+
 
 __all__ = ["Client"]
 

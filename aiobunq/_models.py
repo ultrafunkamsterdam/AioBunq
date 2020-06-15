@@ -1,13 +1,46 @@
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# part of aiobunq package
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
 def _undunder_dict(d):
     return {k: v for (k, v) in d.items() if not k[0] == "_"}
 
 
 class BunqObject(object):
+
+
     # todo: ugly, tidy it up
     def __init__(self, o: dict, **kw):
         self._type, data = o.copy().popitem()
         self.__dict__.update(data)
         self.__dict__.update(kw)
+
+
+    def __getitem__(self, item):
+        return self.__dict__.get(item)
+
+
+    def __setitem__(self, key, value):
+        self.__dict__[key] = value
+
+
+    def __iter__(self):
+        from ._client import Client
+
+        iters = dict((x, y)
+                     for x, y in self.__dict__.items()
+                     if not callable(y)
+                     and not isinstance(y, (BunqObject, Client))
+                     and not x.startswith('_'))
+        for k, v in iters.items():
+            yield k, v
+
+
+    @property
+    def dict(self):
+        return dict(self)
+
 
     def __repr__(self):
         return f"<[{self._type}]({_undunder_dict(self.__dict__)})>"
@@ -34,7 +67,6 @@ class BunqTab(BunqObject):
         self.__dict__.update(
             (await self.client.request("GET", self.url + str(self.id)))[0][self._type]
         )
-        # return self.__class__( * await self.client.request("GET", self.uuid))
 
 
 class BunqMeMerchantRequest(BunqObject):

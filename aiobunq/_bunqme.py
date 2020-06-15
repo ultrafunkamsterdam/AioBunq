@@ -1,9 +1,15 @@
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# part of aiobunq package
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
 import asyncio
 import base64
 import json
 
 from ._client import Client
 from ._models import BunqMeMerchantRequest
+
 
 BUNQME_URL_NAME = "EX4"  # change to 0
 KEY_BUNQME_CHECKOUT_PUBKEY = "pk_42a4efb8-cee1-4748-9e4e-06bf7174ca81"
@@ -110,7 +116,6 @@ class BunqMe:
         :param currency:
         :param description:
         :param redirect_url:
-        :param issuer_bic:
         :return: list[dict]
         """
         tab = await self.client.createTab(value, currency, description, redirect_url)
@@ -233,7 +238,6 @@ class BunqMe:
             ).decode()
 
         with self.client.foreign_base_url("/".join([URL_BUNQME_API, VERSION])):
-
             fr_profile = await self.client.request(
                 "POST",
                 "bunqme-fundraiser-profile",
@@ -244,7 +248,6 @@ class BunqMe:
                     }
                 },
             )
-
             response = await self.client.request(
                 "POST",
                 "bunqme-merchant-request",
@@ -274,37 +277,3 @@ class BunqMe:
                     return r
 
 
-class MerchantRequestWatcher:
-    _store: set = set()
-    _cbs: set = set()
-    _client: Client = None
-
-    @classmethod
-    def add(cls, obj: BunqMeMerchantRequest):
-        cls._store.add(obj)
-
-    @classmethod
-    def set_client(cls, client: Client):
-        cls._client = client
-
-    @classmethod
-    def add_callback(cls, fn):
-        cls._cbs.add(fn)
-
-    @classmethod
-    async def run(cls):
-        with cls._client.foreign_base_url(
-            "/".join([URL_BUNQME_API, VERSION, MERCHANT_REQUEST])
-        ):
-            while True:
-                try:
-                    item = cls._store.pop()
-                except IndexError:
-                    await asyncio.sleep(2)
-                    continue
-                updated = BunqMeMerchantRequest(
-                    *(await cls._client.request("GET", item.uuid))[0]
-                )
-                if updated.status != "PAYMENT_CREATED":
-                    for callback in cls._cbs:
-                        callback(updated)
