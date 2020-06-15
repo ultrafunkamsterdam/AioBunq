@@ -11,7 +11,7 @@ from ._client import Client
 from ._models import BunqMeMerchantRequest
 
 
-BUNQME_URL_NAME = "EX4"  # change to 0
+BUNQME_URL_NAME = "null"  # change to 0
 KEY_BUNQME_CHECKOUT_PUBKEY = "pk_42a4efb8-cee1-4748-9e4e-06bf7174ca81"
 URL_BUNQME_API = "https://api.bunq.me"
 URL_CHECKOUT_API = "https://api.checkout.com"
