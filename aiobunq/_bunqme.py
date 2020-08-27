@@ -23,7 +23,7 @@ TAB_ENTRY = "bunqme_tab_entry"
 
 AMOUNT_REQUESTED = "amount_requested"
 MONETARY_ACCOUNT = "monetary-account"
-MERCHANT_REQUEST = "bunqme-merchant-request"
+MERCHANT_REQUEST = "bunqme-merchant-request-checkout-fee"
 CURRENCY = "currency"
 ISSUER = "issuer"
 BUNQME_UUID = "bunqme_uuid"
